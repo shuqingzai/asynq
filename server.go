@@ -15,10 +15,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
 	"github.com/hibiken/asynq/internal/base"
 	"github.com/hibiken/asynq/internal/log"
 	"github.com/hibiken/asynq/internal/rdb"
-	"github.com/redis/go-redis/v9"
 )
 
 // Server is responsible for task processing and task lifecycle management.
@@ -106,6 +107,10 @@ type Config struct {
 	// If BaseContext is nil, the default is context.Background().
 	// If this is defined, then it MUST return a non-nil context
 	BaseContext func() context.Context
+	// BaseContextWithTask optionally specifies a function that returns the base context for Handler invocations on this server.
+	//
+	// See BaseContext for more details.
+	BaseContextWithTask func(*Task) context.Context
 
 	// TaskCheckInterval specifies the interval between checks for new tasks to process when all queues are empty.
 	//
@@ -444,7 +449,7 @@ func NewServer(r RedisConnOpt, cfg Config) *Server {
 // Warning: The underlying redis connection pool will not be closed by Asynq, you are responsible for closing it.
 func NewServerFromRedisClient(c redis.UniversalClient, cfg Config) *Server {
 	baseCtxFn := cfg.BaseContext
-	if baseCtxFn == nil {
+	if baseCtxFn == nil && cfg.BaseContextWithTask == nil {
 		baseCtxFn = context.Background
 	}
 	n := cfg.Concurrency
@@ -548,6 +553,7 @@ func NewServerFromRedisClient(c redis.UniversalClient, cfg Config) *Server {
 		retryDelayFunc:    delayFunc,
 		taskCheckInterval: taskCheckInterval,
 		baseCtxFn:         baseCtxFn,
+		baseCtxFnWithTask: cfg.BaseContextWithTask,
 		isFailureFunc:     isFailureFunc,
 		syncCh:            syncCh,
 		cancelations:      cancels,

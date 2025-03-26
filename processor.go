@@ -16,12 +16,13 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/time/rate"
+
 	"github.com/hibiken/asynq/internal/base"
 	asynqcontext "github.com/hibiken/asynq/internal/context"
 	"github.com/hibiken/asynq/internal/errors"
 	"github.com/hibiken/asynq/internal/log"
 	"github.com/hibiken/asynq/internal/timeutil"
-	"golang.org/x/time/rate"
 )
 
 type processor struct {
@@ -31,6 +32,8 @@ type processor struct {
 
 	handler   Handler
 	baseCtxFn func() context.Context
+
+	baseCtxFnWithTask func(task *Task) context.Context
 
 	queueConfig map[string]int
 
@@ -76,6 +79,7 @@ type processorParams struct {
 	logger            *log.Logger
 	broker            base.Broker
 	baseCtxFn         func() context.Context
+	baseCtxFnWithTask func(task *Task) context.Context
 	retryDelayFunc    RetryDelayFunc
 	taskCheckInterval time.Duration
 	isFailureFunc     func(error) bool
@@ -101,6 +105,7 @@ func newProcessor(params processorParams) *processor {
 		logger:            params.logger,
 		broker:            params.broker,
 		baseCtxFn:         params.baseCtxFn,
+		baseCtxFnWithTask: params.baseCtxFnWithTask,
 		clock:             timeutil.NewRealClock(),
 		queueConfig:       queues,
 		orderedQueues:     orderedQueues,
@@ -201,8 +206,7 @@ func (p *processor) exec() {
 				p.finished <- msg
 				<-p.sema // release token
 			}()
-
-			ctx, cancel := asynqcontext.New(p.baseCtxFn(), msg, deadline)
+			ctx, cancel := asynqcontext.New(p.resolveBaseContext(msg), msg, deadline)
 			p.cancelations.Add(msg.ID, cancel)
 			defer func() {
 				cancel()
@@ -255,6 +259,21 @@ func (p *processor) exec() {
 			}
 		}()
 	}
+}
+
+func (p *processor) resolveBaseContext(msg *base.TaskMessage) context.Context {
+	if p.baseCtxFnWithTask != nil {
+		return p.baseCtxFnWithTask(newTask(
+			msg.Type,
+			msg.Payload,
+			&ResultWriter{
+				id:     msg.ID,
+				qname:  msg.Queue,
+				broker: p.broker,
+			},
+		))
+	}
+	return p.baseCtxFn()
 }
 
 func (p *processor) requeue(l *base.Lease, msg *base.TaskMessage) {

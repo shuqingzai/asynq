@@ -206,6 +206,7 @@ func (p *processor) exec() {
 				p.finished <- msg
 				<-p.sema // release token
 			}()
+
 			ctx, cancel := asynqcontext.New(p.resolveBaseContext(msg), msg, deadline)
 			p.cancelations.Add(msg.ID, cancel)
 			defer func() {
